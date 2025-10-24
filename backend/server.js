@@ -30,7 +30,8 @@ const server = http.createServer(app);
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
- ' https://farm-to-kitchen.netlify.app/', // Replace with your actual deployed frontend URL
+ ' https://farm-to-kitchen.netlify.app/',
+  'https://farmtokitchen-project.onrender.com', // Replace with your actual deployed frontend URL
   process.env.CLIENT_URL
 ].filter(Boolean);
 //uPDATING THE URL
@@ -57,12 +58,33 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // Update Socket.IO CORS configuration
+ 
 const io = socketIo(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: function (origin, callback) {
+      // Allow requests with no origin
+      if (!origin) return callback(null, true);
+      
+      // Allow Netlify domains
+      if (origin.endsWith('.netlify.app')) {
+        return callback(null, true);
+      }
+      
+      // Allow Render domains
+      if (origin.endsWith('.onrender.com')) {
+        return callback(null, true);
+      }
+      
+      // Check allowed origins
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     methods: ["GET", "POST"],
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization"]
+    allowedHeaders: ["Content-Type", "Authorization", "X-Socket-ID"]
   },
   transports: ['websocket', 'polling']
 });
