@@ -33,7 +33,7 @@ const allowedOrigins = [
  ' https://farm-to-kitchen.netlify.app/', // Replace with your actual deployed frontend URL
   process.env.CLIENT_URL
 ].filter(Boolean);
-
+//uPDATING THE URL
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps, curl, etc.)
@@ -72,7 +72,7 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 app.use(compression());
-
+ 
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
