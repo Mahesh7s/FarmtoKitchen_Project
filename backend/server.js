@@ -27,34 +27,43 @@ const app = express();
 const server = http.createServer(app);
 
 // Enhanced CORS configuration for production
+const rawClientUrl = (process.env.CLIENT_URL || '').trim().replace(/\/$/, '');
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
- ' https://farm-to-kitchen.netlify.app/',
-  'https://farmtokitchen-project.onrender.com', // Replace with your actual deployed frontend URL
-  process.env.CLIENT_URL
+  'https://farmtokitchen-project.onrender.com',
+  'https://farm-to-kitchen.netlify.app',
+  rawClientUrl
 ].filter(Boolean);
-//uPDATING THE URL
+
+// Robust CORS options
 const corsOptions = {
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, etc.)
+    // Allow requests without an origin (curl, mobile, server-to-server)
     if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      console.log('Blocked by CORS:', origin);
-      callback(new Error('Not allowed by CORS'));
+
+    // Normalize
+    const normalized = origin.trim().replace(/\/$/, '');
+
+    // Allow host patterns we trust
+    if (
+      allowedOrigins.includes(normalized) ||
+      normalized.endsWith('.netlify.app') ||
+      normalized.endsWith('.onrender.com')
+    ) {
+      return callback(null, true);
     }
+
+    console.log('Blocked by CORS origin:', origin);
+    // Do NOT pass an Error here — pass (null, false) so CORS middleware returns proper 403/OPTIONS handling
+    return callback(null, false);
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"]
+  methods: ['GET','POST','PUT','DELETE','PATCH','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Requested-With','Accept','Origin']
 };
 
 app.use(cors(corsOptions));
-
-// Handle preflight requests
 app.options('*', cors(corsOptions));
 
 // Update Socket.IO CORS configuration
