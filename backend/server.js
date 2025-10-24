@@ -30,7 +30,7 @@ const server = http.createServer(app);
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
-  'https://your-frontend-app.onrender.com', // Replace with your actual deployed frontend URL
+ ' https://farm-to-kitchen.netlify.app/', // Replace with your actual deployed frontend URL
   process.env.CLIENT_URL
 ].filter(Boolean);
 

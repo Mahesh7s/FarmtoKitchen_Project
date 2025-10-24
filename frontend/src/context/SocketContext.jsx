@@ -26,7 +26,7 @@ export const SocketProvider = ({ children }) => {
         
         if (user && token) {
           // Use environment variable or fallback
-          const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000';
+        const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000';
           
           newSocket = io(SOCKET_URL, {
             auth: { token },
