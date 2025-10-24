@@ -37,6 +37,22 @@ import ProductDetailStandalone from './pages/ProductDetailStandalone';
 import ForgotPassword from './pages/auth/ForgotPassword';
 import ResetPassword from './pages/auth/ResetPassword';
 
+// Add a simple 404 component
+const NotFound = () => (
+  <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+    <div className="text-center">
+      <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-4">404</h1>
+      <p className="text-gray-600 dark:text-gray-400 mb-4">Page not found</p>
+      <a 
+        href="/" 
+        className="text-primary-500 hover:text-primary-600 dark:text-primary-400 dark:hover:text-primary-300"
+      >
+        Go back home
+      </a>
+    </div>
+  </div>
+);
+
 function App() {
   return (
     <AuthProvider>
@@ -68,9 +84,9 @@ function App() {
                       element={<ProductDetailStandalone />} 
                     />
 
-                    {/* Protected consumer routes */}
+                    {/* Protected consumer routes - Add wildcard for nested routes */}
                     <Route 
-                      path="/consumer" 
+                      path="/consumer/*"
                       element={
                         <ProtectedRoute requiredRole="consumer">
                           <ConsumerDashboard />
@@ -89,9 +105,9 @@ function App() {
                       <Route path="settings" element={<Settings />} />
                     </Route>
 
-                    {/* Protected farmer routes */}
+                    {/* Protected farmer routes - Add wildcard for nested routes */}
                     <Route 
-                      path="/farmer" 
+                      path="/farmer/*"
                       element={
                         <ProtectedRoute requiredRole="farmer">
                           <FarmerDashboard />
@@ -130,7 +146,8 @@ function App() {
                       } 
                     />
 
-                    <Route path="*" element={<Navigate to="/" replace />} />
+                    {/* Global catch-all route */}
+                    <Route path="*" element={<NotFound />} />
                   </Routes>
                   
                   <Toaster 

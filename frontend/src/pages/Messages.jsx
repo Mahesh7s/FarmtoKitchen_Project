@@ -1127,8 +1127,7 @@ const Messages = () => {
         </div>
       </div>
 
-      {/* Modals remain the same */}
-      {/* ... (modal code remains unchanged) ... */}
+     
     </div>
   );
 };
