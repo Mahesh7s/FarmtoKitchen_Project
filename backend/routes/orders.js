@@ -1,4 +1,5 @@
 const express = require('express');
+const router = express.Router();
 const {
   createOrder,
   getConsumerOrders,
@@ -10,18 +11,24 @@ const {
   getOrderById,
   processOrderPayment
 } = require('../controllers/orderController');
-const { auth, authorize } = require('../middleware/auth');
+const { auth, authorize } = require('../middleware/auth'); // Changed protect to auth
 
-const router = express.Router();
+// All routes are protected
+router.use(auth); // Changed protect to auth
 
-router.post('/', auth, authorize('consumer'), createOrder);
-router.get('/consumer/my-orders', auth, authorize('consumer'), getConsumerOrders);
-router.get('/farmer/my-orders', auth, authorize('farmer'), getFarmerOrders);
-router.get('/farmer/analytics', auth, authorize('farmer'), getOrderAnalytics);
-router.put('/:id/status', auth, updateOrderStatus);
-router.post('/confirm-payment', auth, confirmPayment);
-router.put('/:id/cancel', auth, cancelOrder);
-router.get('/:id', auth, getOrderById);
-router.post('/:id/process-payment', auth, processOrderPayment);
+// Consumer routes
+router.post('/', createOrder);
+router.get('/consumer/my-orders', getConsumerOrders);
+router.get('/:id', getOrderById);
+
+// Farmer routes
+router.get('/farmer/my-orders', authorize('farmer', 'admin'), getFarmerOrders);
+router.get('/farmer/analytics', authorize('farmer', 'admin'), getOrderAnalytics);
+
+// Order management routes
+router.put('/:id/status', updateOrderStatus);
+router.put('/:id/cancel', cancelOrder);
+router.post('/:id/process-payment', processOrderPayment);
+router.post('/confirm-payment', confirmPayment);
 
 module.exports = router;

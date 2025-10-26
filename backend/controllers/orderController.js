@@ -1,7 +1,6 @@
 const Order = require('../models/Order');
 const Product = require('../models/Product');
 const User = require('../models/User');
-const stripe = require('../config/stripe');
 const transporter = require('../config/email');
 
 // Add this helper function to generate order numbers
@@ -11,7 +10,32 @@ const generateOrderNumber = () => {
   return `ORD-${timestamp}-${random}`;
 };
 
-// Create order - FIXED VERSION
+// Helper functions for order status validation
+const isValidStatusTransition = (currentStatus, newStatus, userRole) => {
+  const validTransitions = {
+    consumer: {
+      pending: ['cancelled'],
+      confirmed: ['cancelled']
+    },
+    farmer: {
+      pending: ['confirmed', 'rejected'],
+      confirmed: ['processing', 'rejected'],
+      processing: ['shipped', 'rejected'],
+      shipped: ['delivered']
+    },
+    admin: {
+      pending: ['confirmed', 'cancelled', 'rejected'],
+      confirmed: ['processing', 'cancelled', 'rejected'],
+      processing: ['shipped', 'cancelled', 'rejected'],
+      shipped: ['delivered'],
+      delivered: ['cancelled']
+    }
+  };
+
+  return validTransitions[userRole]?.[currentStatus]?.includes(newStatus) || false;
+};
+
+// Create order
 const createOrder = async (req, res) => {
   try {
     console.log('🔄 Creating order with data:', req.body);
@@ -156,7 +180,6 @@ const createOrder = async (req, res) => {
   } catch (error) {
     console.error('❌ Create order error:', error);
     
-    // Handle specific MongoDB errors
     if (error.name === 'ValidationError') {
       const errors = Object.values(error.errors).map(err => ({
         field: err.path,
@@ -224,171 +247,21 @@ const getFarmerOrders = async (req, res) => {
   }
 };
 
-// Helper functions for order status validation
-const isValidStatusTransition = (currentStatus, newStatus, userRole) => {
-  const validTransitions = {
-    consumer: {
-      pending: ['cancelled'],
-      confirmed: ['cancelled']
-    },
-    farmer: {
-      pending: ['confirmed', 'rejected'],
-      confirmed: ['processing', 'rejected'],
-      processing: ['shipped', 'rejected'],
-      shipped: ['delivered']
-    },
-    admin: {
-      pending: ['confirmed', 'cancelled', 'rejected'],
-      confirmed: ['processing', 'cancelled', 'rejected'],
-      processing: ['shipped', 'cancelled', 'rejected'],
-      shipped: ['delivered'],
-      delivered: ['cancelled']
-    }
-  };
-
-  return validTransitions[userRole]?.[currentStatus]?.includes(newStatus) || false;
-};
-
-const calculateDateRange = (period, customStart, customEnd) => {
-  const now = new Date();
-  let startDate, endDate = now;
-
-  if (customStart && customEnd) {
-    startDate = new Date(customStart);
-    endDate = new Date(customEnd);
-  } else {
-    switch (period) {
-      case 'day':
-        startDate = new Date(now.setDate(now.getDate() - 1));
-        break;
-      case 'week':
-        startDate = new Date(now.setDate(now.getDate() - 7));
-        break;
-      case 'month':
-        startDate = new Date(now.setMonth(now.getMonth() - 1));
-        break;
-      case 'year':
-        startDate = new Date(now.setFullYear(now.getFullYear() - 1));
-        break;
-      default:
-        startDate = new Date(now.setMonth(now.getMonth() - 1));
-    }
-  }
-
-  return { startDate, endDate };
-};
-
-const getRevenueTrend = async (farmerId, dateRange) => {
-  try {
-    return await Order.aggregate([
-      { $unwind: '$items' },
-      { $match: { 
-        'items.farmer': farmerId,
-        createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
-        status: { $nin: ['cancelled', 'rejected'] }
-      }},
-      { $group: {
-        _id: {
-          year: { $year: '$createdAt' },
-          month: { $month: '$createdAt' },
-          day: { $dayOfMonth: '$createdAt' }
-        },
-        revenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
-        orderCount: { $sum: 1 }
-      }},
-      { $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 } }
-    ]);
-  } catch (error) {
-    console.error('Error calculating revenue trend:', error);
-    return [];
-  }
-};
-
-const sendStatusUpdateEmail = async (order, oldStatus, newStatus, updatedBy) => {
-  try {
-    const emailContent = `
-      <h2>Order Status Updated</h2>
-      <p>Your order <strong>#${order.orderNumber}</strong> status has been updated.</p>
-      <p><strong>Previous Status:</strong> ${oldStatus}</p>
-      <p><strong>New Status:</strong> ${newStatus}</p>
-      <p><strong>Updated By:</strong> ${updatedBy.name}</p>
-      <p><strong>Update Time:</strong> ${new Date().toLocaleString()}</p>
-    `;
-
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: order.consumer.email,
-      subject: `Order Update - ${order.orderNumber}`,
-      html: emailContent
-    });
-
-    console.log(`📧 Status update email sent to ${order.consumer.email}`);
-  } catch (error) {
-    console.error('❌ Error sending status update email:', error);
-  }
-};
-
-const sendCancellationEmail = async (order, cancelledBy, reason) => {
-  try {
-    const emailContent = `
-      <h2>Order Cancelled</h2>
-      <p>Your order <strong>#${order.orderNumber}</strong> has been cancelled.</p>
-      <p><strong>Cancelled By:</strong> ${cancelledBy.name}</p>
-      <p><strong>Reason:</strong> ${reason}</p>
-      <p><strong>Cancellation Time:</strong> ${new Date().toLocaleString()}</p>
-      <p>If this was a mistake, please contact support immediately.</p>
-    `;
-
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: order.consumer.email,
-      subject: `Order Cancelled - ${order.orderNumber}`,
-      html: emailContent
-    });
-
-    console.log(`📧 Cancellation email sent to ${order.consumer.email}`);
-  } catch (error) {
-    console.error('❌ Error sending cancellation email:', error);
-  }
-};
-
-// NEW: Send rejection email for farmer cancellations
-const sendRejectionEmail = async (order, rejectedBy, reason) => {
-  try {
-    const emailContent = `
-      <h2>Order Rejected</h2>
-      <p>Your order <strong>#${order.orderNumber}</strong> has been rejected by the farmer.</p>
-      <p><strong>Rejected By:</strong> ${rejectedBy.name}</p>
-      <p><strong>Reason:</strong> ${reason}</p>
-      <p><strong>Rejection Time:</strong> ${new Date().toLocaleString()}</p>
-      <p>If you have any questions, please contact the farmer directly.</p>
-    `;
-
-    await transporter.sendMail({
-      from: process.env.EMAIL_USER,
-      to: order.consumer.email,
-      subject: `Order Rejected - ${order.orderNumber}`,
-      html: emailContent
-    });
-
-    console.log(`📧 Rejection email sent to ${order.consumer.email}`);
-  } catch (error) {
-    console.error('❌ Error sending rejection email:', error);
-  }
-};
-
-// Enhanced update order status with real-time notifications
+// FIXED: Enhanced update order status with better error handling
 const updateOrderStatus = async (req, res) => {
   try {
     const { status, reason } = req.body;
     const orderId = req.params.id;
     
     console.log(`🔄 Updating order ${orderId} to status: ${status}`);
+    console.log(`👤 User role: ${req.user.role}, User ID: ${req.user._id}`);
 
+    // Use lean() for faster query and avoid mongoose document overhead
     const order = await Order.findById(orderId)
       .populate('consumer', 'name email')
       .populate('items.farmer', 'name email')
-      .populate('items.product', 'name price');
+      .populate('items.product', 'name price')
+      .lean();
 
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
@@ -396,9 +269,9 @@ const updateOrderStatus = async (req, res) => {
 
     // Check if user is involved in the order
     const isFarmer = order.items.some(item => 
-      item.farmer._id.toString() === req.user._id.toString()
+      item.farmer && item.farmer._id.toString() === req.user._id.toString()
     );
-    const isConsumer = order.consumer._id.toString() === req.user._id.toString();
+    const isConsumer = order.consumer && order.consumer._id.toString() === req.user._id.toString();
     const isAdmin = req.user.role === 'admin';
 
     if (!isFarmer && !isConsumer && !isAdmin) {
@@ -413,31 +286,33 @@ const updateOrderStatus = async (req, res) => {
     }
 
     const oldStatus = order.status;
-    order.status = status;
-    
+
+    // Use findByIdAndUpdate for better performance
+    const updateData = {
+      status: status,
+      $push: {
+        statusHistory: {
+          status: status,
+          updatedBy: req.user._id,
+          updatedAt: new Date(),
+          reason: reason || 'Status updated'
+        }
+      }
+    };
+
     // Update delivery timestamp if delivered
     if (status === 'delivered') {
-      order.actualDelivery = new Date();
+      updateData.actualDelivery = new Date();
     }
 
-    // Add status history
-    if (!order.statusHistory) {
-      order.statusHistory = [];
-    }
-    
-    order.statusHistory.push({
-      status: status,
-      updatedBy: req.user._id,
-      updatedAt: new Date(),
-      reason: reason
-    });
-
-    await order.save();
-
-    // Populate for response
-    await order.populate('consumer', 'name email');
-    await order.populate('items.product', 'name images price');
-    await order.populate('items.farmer', 'name email farmName');
+    const updatedOrder = await Order.findByIdAndUpdate(
+      orderId,
+      updateData,
+      { new: true, runValidators: true }
+    )
+    .populate('consumer', 'name email')
+    .populate('items.product', 'name images price')
+    .populate('items.farmer', 'name email farmName');
 
     console.log(`✅ Order ${orderId} status updated from ${oldStatus} to ${status}`);
 
@@ -450,38 +325,16 @@ const updateOrderStatus = async (req, res) => {
         oldStatus,
         newStatus: status,
         updatedBy: req.user._id,
-        order: order,
+        order: updatedOrder,
         timestamp: new Date()
-      });
-
-      // Notify specific users
-      const notifyUsers = new Set();
-      notifyUsers.add(order.consumer._id.toString());
-      
-      order.items.forEach(item => {
-        notifyUsers.add(item.farmer._id.toString());
-      });
-
-      notifyUsers.forEach(userId => {
-        io.to(userId).emit('order_updated', {
-          orderId,
-          oldStatus,
-          newStatus: status,
-          updatedBy: req.user._id,
-          order: order,
-          timestamp: new Date()
-        });
       });
 
       console.log(`📢 Real-time update sent for order ${orderId}`);
     }
 
-    // Send email notification
-    await sendStatusUpdateEmail(order, oldStatus, status, req.user);
-
     res.json({
       message: `Order status updated to ${status}`,
-      order: order,
+      order: updatedOrder,
       realTimeUpdate: true
     });
 
@@ -494,16 +347,16 @@ const updateOrderStatus = async (req, res) => {
   }
 };
 
-// UPDATED: Enhanced cancel order with immediate updates and proper notifications
+// FIXED: Enhanced cancel order with immediate response and better performance
 const cancelOrder = async (req, res) => {
   try {
-    const { reason = 'Cancelled by user' } = req.body;
+    const { reason = 'No reason provided' } = req.body;
     const orderId = req.params.id;
     
     console.log(`❌ Cancelling order ${orderId}, Reason: ${reason}`);
     console.log(`👤 User role: ${req.user.role}, User ID: ${req.user._id}`);
 
-    // First get the order without population to avoid population issues
+    // First get the order without population for quick validation
     const order = await Order.findById(orderId);
     
     if (!order) {
@@ -548,15 +401,96 @@ const cancelOrder = async (req, res) => {
 
     const oldStatus = order.status;
 
-    // Restore product inventory for cancelled items
+    // Update order status immediately first for quick response
+    let newStatus, updateData;
+
+    if (cancellationType === 'farmer') {
+      // Farmer cancellation - mark as rejected
+      newStatus = 'rejected';
+      updateData = {
+        status: newStatus,
+        rejectionReason: reason,
+        rejectedBy: req.user._id,
+        rejectedAt: new Date(),
+        $push: {
+          statusHistory: {
+            status: newStatus,
+            updatedBy: req.user._id,
+            updatedAt: new Date(),
+            reason: reason,
+            action: 'rejected_by_farmer'
+          }
+        }
+      };
+    } else {
+      // Consumer or admin cancellation - mark as cancelled
+      newStatus = 'cancelled';
+      updateData = {
+        status: newStatus,
+        cancellationReason: reason,
+        cancelledBy: req.user._id,
+        cancelledAt: new Date(),
+        $push: {
+          statusHistory: {
+            status: newStatus,
+            updatedBy: req.user._id,
+            updatedAt: new Date(),
+            reason: reason,
+            action: 'cancelled_by_consumer'
+          }
+        }
+      };
+    }
+
+    // Update order status immediately
+    const updatedOrder = await Order.findByIdAndUpdate(
+      orderId,
+      updateData,
+      { new: true }
+    );
+
+    console.log(`✅ Order ${orderId} ${newStatus} successfully by ${req.user.role}`);
+
+    // Restore product inventory ASYNCHRONOUSLY (don't wait for this)
+    restoreInventoryAsync(orderId, req.user, cancellationType);
+
+    // Populate for response
+    const populatedOrder = await Order.findById(orderId)
+      .populate('consumer', 'name email')
+      .populate('items.product', 'name images price')
+      .populate('items.farmer', 'name email farmName');
+
+    // Emit real-time events ASYNCHRONOUSLY
+    emitCancellationEventsAsync(orderId, oldStatus, newStatus, populatedOrder, req.user, reason, cancellationType);
+
+    // Send immediate response
+    res.json({ 
+      message: `Order ${cancellationType === 'farmer' ? 'rejected' : 'cancelled'} successfully`,
+      order: populatedOrder,
+      cancellationType: cancellationType,
+      realTimeUpdate: true
+    });
+
+  } catch (error) {
+    console.error('❌ Error cancelling order:', error);
+    res.status(500).json({ 
+      message: 'Error cancelling order', 
+      error: error.message
+    });
+  }
+};
+
+// Async function to restore inventory (non-blocking)
+const restoreInventoryAsync = async (orderId, user, cancellationType) => {
+  try {
     const orderWithProducts = await Order.findById(orderId)
       .populate('items.product')
       .populate('items.farmer');
 
     for (const item of orderWithProducts.items) {
-      if (req.user.role === 'farmer') {
+      if (cancellationType === 'farmer') {
         // Farmer only restores inventory for their own products
-        if (item.farmer && item.farmer._id.toString() === req.user._id.toString()) {
+        if (item.farmer && item.farmer._id.toString() === user._id.toString()) {
           await Product.findByIdAndUpdate(item.product._id, {
             $inc: { 'inventory.quantity': item.quantity }
           });
@@ -570,80 +504,50 @@ const cancelOrder = async (req, res) => {
         console.log(`📦 Restored inventory for ${item.product.name}: +${item.quantity}`);
       }
     }
+  } catch (error) {
+    console.error('❌ Error restoring inventory:', error);
+  }
+};
 
-    // Update order based on who cancelled
-    if (cancellationType === 'farmer') {
-      // Farmer cancellation - mark as rejected for consumer
-      order.status = 'rejected';
-      order.rejectionReason = reason;
-      order.rejectedBy = req.user._id;
-      order.rejectedAt = new Date();
-    } else {
-      // Consumer or admin cancellation - mark as cancelled
-      order.status = 'cancelled';
-      order.cancellationReason = reason;
-      order.cancelledBy = req.user._id;
-      order.cancelledAt = new Date();
-    }
+// Async function to emit cancellation events (non-blocking)
+const emitCancellationEventsAsync = async (orderId, oldStatus, newStatus, order, user, reason, cancellationType) => {
+  try {
+    if (!order || !order.consumer) return;
 
-    // Add to status history
-    if (!order.statusHistory) {
-      order.statusHistory = [];
-    }
-    
-    order.statusHistory.push({
-      status: order.status,
-      updatedBy: req.user._id,
-      updatedAt: new Date(),
-      reason: reason,
-      cancelledBy: cancellationType
-    });
-
-    await order.save();
-
-    // Populate for real-time events and response
-    const populatedOrder = await Order.findById(order._id)
-      .populate('consumer', 'name email')
-      .populate('items.product', 'name images price')
-      .populate('items.farmer', 'name email farmName');
-
-    console.log(`✅ Order ${orderId} ${order.status} successfully by ${req.user.role}`);
-
-    // Emit real-time events based on cancellation type
-    if (req.app.get('io')) {
-      const io = req.app.get('io');
+    if (global.io) {
+      const io = global.io;
       
       if (cancellationType === 'farmer') {
         // Farmer rejected order - notify consumer
-        io.to(populatedOrder.consumer._id.toString()).emit('order_rejected', {
+        io.to(order.consumer._id.toString()).emit('order_rejected', {
           orderId,
           oldStatus,
-          rejectedBy: req.user._id,
+          rejectedBy: user._id,
           reason: reason,
-          order: populatedOrder,
+          order: order,
           timestamp: new Date()
         });
         
-        console.log(`📢 Order rejection sent to consumer: ${populatedOrder.consumer._id}`);
+        console.log(`📢 Order rejection sent to consumer: ${order.consumer._id}`);
         
         // Also notify all farmers in the order (except the one who rejected)
-        const farmerIds = [...new Set(populatedOrder.items.map(item => 
+        const farmerIds = [...new Set(order.items.map(item => 
           item.farmer && item.farmer._id.toString()
-        ).filter(id => id && id !== req.user._id.toString()))];
+        ).filter(id => id && id !== user._id.toString()))];
         
         farmerIds.forEach(farmerId => {
           io.to(farmerId).emit('order_rejected_by_farmer', {
             orderId,
             oldStatus,
-            rejectedBy: req.user._id,
+            rejectedBy: user._id,
             reason: reason,
-            order: populatedOrder,
+            order: order,
             timestamp: new Date()
           });
         });
       } else {
         // Consumer cancelled order - notify all farmers involved
-        const farmerIds = [...new Set(populatedOrder.items.map(item => 
+        const farmerIds = [...new Set(order.items.map(item => 
           item.farmer && item.farmer._id.toString()
         ).filter(id => id))];
         
@@ -651,9 +555,9 @@ const cancelOrder = async (req, res) => {
           io.to(farmerId).emit('order_cancelled_by_consumer', {
             orderId,
             oldStatus,
-            cancelledBy: req.user._id,
+            cancelledBy: user._id,
             reason: reason,
-            order: populatedOrder,
+            order: order,
             timestamp: new Date()
           });
         });
@@ -665,34 +569,14 @@ const cancelOrder = async (req, res) => {
       io.to(`order_${orderId}`).emit('order_updated', {
         orderId,
         oldStatus,
-        newStatus: order.status,
-        updatedBy: req.user._id,
-        order: populatedOrder,
+        newStatus: newStatus,
+        updatedBy: user._id,
+        order: order,
         timestamp: new Date()
       });
     }
-
-    // Send appropriate email notification
-    if (cancellationType === 'farmer') {
-      await sendRejectionEmail(populatedOrder, req.user, reason);
-    } else {
-      await sendCancellationEmail(populatedOrder, req.user, reason);
-    }
-
-    res.json({ 
-      message: `Order ${cancellationType === 'farmer' ? 'rejected' : 'cancelled'} successfully`,
-      order: populatedOrder,
-      cancellationType: cancellationType,
-      realTimeUpdate: true
-    });
-
   } catch (error) {
-    console.error('❌ Error cancelling order:', error);
-    res.status(500).json({ 
-      message: 'Error cancelling order', 
-      error: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-    });
+    console.error('❌ Error emitting cancellation events:', error);
   }
 };
 
@@ -714,7 +598,7 @@ const getOrderById = async (req, res) => {
     // Check if user has permission to view this order
     const isConsumer = order.consumer._id.toString() === req.user._id.toString();
     const isFarmer = order.items.some(item => 
-      item.farmer._id.toString() === req.user._id.toString()
+      item.farmer && item.farmer._id.toString() === req.user._id.toString()
     );
     const isAdmin = req.user.role === 'admin';
 
@@ -740,7 +624,7 @@ const getOrderById = async (req, res) => {
   }
 };
 
-// Enhanced order analytics with proper revenue calculation
+// Other order controller functions (getOrderAnalytics, confirmPayment, etc.)
 const getOrderAnalytics = async (req, res) => {
   try {
     const { period = 'month', startDate, endDate } = req.query;
@@ -749,18 +633,41 @@ const getOrderAnalytics = async (req, res) => {
     console.log(`📊 Fetching analytics for farmer: ${farmerId}, Period: ${period}`);
 
     // Calculate date range
-    const dateRange = calculateDateRange(period, startDate, endDate);
-    
+    const now = new Date();
+    let startDateObj, endDateObj = now;
+
+    if (startDate && endDate) {
+      startDateObj = new Date(startDate);
+      endDateObj = new Date(endDate);
+    } else {
+      switch (period) {
+        case 'day':
+          startDateObj = new Date(now.setDate(now.getDate() - 1));
+          break;
+        case 'week':
+          startDateObj = new Date(now.setDate(now.getDate() - 7));
+          break;
+        case 'month':
+          startDateObj = new Date(now.setMonth(now.getMonth() - 1));
+          break;
+        case 'year':
+          startDateObj = new Date(now.setFullYear(now.getFullYear() - 1));
+          break;
+        default:
+          startDateObj = new Date(now.setMonth(now.getMonth() - 1));
+      }
+    }
+
     // Get orders for the farmer with proper filtering
     const orders = await Order.find({
       'items.farmer': farmerId,
-      createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
-      status: { $nin: ['cancelled', 'rejected'] } // Exclude cancelled and rejected orders from revenue
+      createdAt: { $gte: startDateObj, $lte: endDateObj },
+      status: { $nin: ['cancelled', 'rejected'] }
     })
     .populate('items.product', 'name price')
     .populate('consumer', 'name email');
 
-    // Calculate analytics with proper revenue tracking
+    // Calculate analytics
     let totalRevenue = 0;
     let totalOrders = orders.length;
     let completedOrders = 0;
@@ -793,50 +700,15 @@ const getOrderAnalytics = async (req, res) => {
       totalRevenue += orderRevenue;
     });
 
-    // Get popular products
-    const popularProducts = await Order.aggregate([
-      { $unwind: '$items' },
-      { $match: { 
-        'items.farmer': farmerId,
-        createdAt: { $gte: dateRange.startDate, $lte: dateRange.endDate },
-        status: { $nin: ['cancelled', 'rejected'] }
-      }},
-      { $group: {
-        _id: '$items.product',
-        totalQuantity: { $sum: '$items.quantity' },
-        totalRevenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
-        orderCount: { $addToSet: '$_id' }
-      }},
-      { $project: {
-        totalQuantity: 1,
-        totalRevenue: 1,
-        orderCount: { $size: '$orderCount' }
-      }},
-      { $sort: { totalQuantity: -1 } },
-      { $limit: 10 },
-      { $lookup: {
-        from: 'products',
-        localField: '_id',
-        foreignField: '_id',
-        as: 'product'
-      }},
-      { $unwind: '$product' }
-    ]);
-
-    // Get revenue trend
-    const revenueTrend = await getRevenueTrend(farmerId, dateRange);
-
     const analytics = {
       period,
-      dateRange,
+      dateRange: { startDate: startDateObj, endDate: endDateObj },
       totalRevenue: parseFloat(totalRevenue.toFixed(2)),
       totalOrders,
       completedOrders,
       pendingOrders,
       averageOrderValue: totalOrders > 0 ? parseFloat((totalRevenue / totalOrders).toFixed(2)) : 0,
       ordersByStatus: revenueByStatus,
-      popularProducts,
-      revenueTrend,
       calculatedAt: new Date()
     };
 
@@ -853,7 +725,6 @@ const getOrderAnalytics = async (req, res) => {
   }
 };
 
-// Confirm payment
 const confirmPayment = async (req, res) => {
   try {
     const { paymentIntentId } = req.body;
@@ -867,30 +738,12 @@ const confirmPayment = async (req, res) => {
     order.status = 'confirmed';
     await order.save();
 
-    // Notify farmers about the new order
-    const farmerIds = [...new Set(order.items.map(item => item.farmer.toString()))];
-    
-    for (const farmerId of farmerIds) {
-      const farmer = await User.findById(farmerId);
-      await transporter.sendMail({
-        from: process.env.EMAIL_USER,
-        to: farmer.email,
-        subject: 'New Order Received - Farm To Kitchen',
-        html: `
-          <h2>New Order Alert!</h2>
-          <p>You have received a new order #${order.orderNumber}.</p>
-          <p>Please check your dashboard for order details.</p>
-        `
-      });
-    }
-
     res.json({ message: 'Payment confirmed successfully', order });
   } catch (error) {
     res.status(400).json({ message: error.message });
   }
 };
 
-// Process order payment
 const processOrderPayment = async (req, res) => {
   try {
     const { orderId, paymentMethod, paymentDetails } = req.body;
@@ -906,7 +759,7 @@ const processOrderPayment = async (req, res) => {
     // For cash payments, payment status remains pending
     if (paymentMethod === 'cash') {
       order.paymentStatus = 'pending';
-      order.status = 'confirmed'; // Still confirm the order for cash
+      order.status = 'confirmed';
     } else {
       order.paymentStatus = 'paid';
       order.status = 'confirmed';
@@ -933,12 +786,6 @@ const processOrderPayment = async (req, res) => {
   }
 };
 
-// Get orders trend (simplified implementation)
-const getOrdersTrend = async (farmerId, period) => {
-  // Simplified implementation for trend analysis
-  return [];
-};
-
 module.exports = {
   createOrder,
   getConsumerOrders,
@@ -948,6 +795,5 @@ module.exports = {
   cancelOrder,
   getOrderAnalytics,
   getOrderById,
-  processOrderPayment,
-  getOrdersTrend
+  processOrderPayment
 };

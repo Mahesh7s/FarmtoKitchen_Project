@@ -26,6 +26,77 @@ import {
   Eye
 } from 'lucide-react';
 
+// Toast Notification Component
+const ToastNotification = ({ 
+  message, 
+  type = 'success', 
+  isVisible, 
+  onClose 
+}) => {
+  useEffect(() => {
+    if (isVisible) {
+      const timer = setTimeout(() => {
+        onClose();
+      }, 4000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [isVisible, onClose]);
+
+  if (!isVisible) return null;
+
+  const getToastStyles = () => {
+    switch (type) {
+      case 'success':
+        return 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800 text-green-800 dark:text-green-300';
+      case 'error':
+        return 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800 text-red-800 dark:text-red-300';
+      case 'warning':
+        return 'bg-orange-50 border-orange-200 dark:bg-orange-900/20 dark:border-orange-800 text-orange-800 dark:text-orange-300';
+      case 'info':
+        return 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800 text-blue-800 dark:text-blue-300';
+      default:
+        return 'bg-gray-50 border-gray-200 dark:bg-gray-900/20 dark:border-gray-800 text-gray-800 dark:text-gray-300';
+    }
+  };
+
+  const getIcon = () => {
+    switch (type) {
+      case 'success':
+        return <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />;
+      case 'error':
+        return <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />;
+      case 'warning':
+        return <AlertTriangle className="h-5 w-5 text-orange-600 dark:text-orange-400" />;
+      case 'info':
+        return <Clock className="h-5 w-5 text-blue-600 dark:text-blue-400" />;
+      default:
+        return <CheckCircle className="h-5 w-5 text-gray-600 dark:text-gray-400" />;
+    }
+  };
+
+  return (
+    <div className={`fixed top-4 right-4 z-50 max-w-sm w-full transform transition-all duration-300 ${
+      isVisible ? 'translate-x-0 opacity-100' : 'translate-x-full opacity-0'
+    }`}>
+      <div className={`${getToastStyles()} border rounded-lg shadow-lg p-4 flex items-start space-x-3`}>
+        <div className="flex-shrink-0">
+          {getIcon()}
+        </div>
+        <div className="flex-1">
+          <p className="text-sm font-medium">{message}</p>
+        </div>
+        <button
+          onClick={onClose}
+          className="flex-shrink-0 ml-4 p-1 hover:bg-black hover:bg-opacity-10 rounded-full transition-colors duration-200"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+};
+
 // Cancel Order Modal Component
 const CancelOrderModal = ({ 
   isOpen, 
@@ -586,6 +657,31 @@ const Orders = () => {
     isLoading: false
   });
 
+  // State for toast notifications
+  const [toast, setToast] = useState({
+    isVisible: false,
+    message: '',
+    type: 'success'
+  });
+
+  // Show toast notification
+  const showToast = (message, type = 'success') => {
+    setToast({
+      isVisible: true,
+      message,
+      type
+    });
+  };
+
+  // Hide toast notification
+  const hideToast = () => {
+    setToast({
+      isVisible: false,
+      message: '',
+      type: 'success'
+    });
+  };
+
   // Handle window resize for responsive design
   useEffect(() => {
     const handleResize = () => {
@@ -742,6 +838,21 @@ const Orders = () => {
     );
     
     setLastUpdated(new Date());
+    
+    // Show toast notification for real-time updates
+    if (data.newStatus) {
+      const statusMessages = {
+        'confirmed': 'Order confirmed and accepted!',
+        'processing': 'Order is now being processed!',
+        'shipped': 'Order has been shipped!',
+        'delivered': 'Order has been delivered!'
+      };
+      
+      if (statusMessages[data.newStatus]) {
+        showToast(statusMessages[data.newStatus], 'success');
+      }
+    }
+    
     console.log(`✅ Order ${data.orderId} updated in real-time to: ${data.newStatus}`);
   };
 
@@ -755,6 +866,10 @@ const Orders = () => {
     );
     
     setLastUpdated(new Date());
+    
+    // Show toast notification for cancellation
+    showToast('Order has been cancelled', 'error');
+    
     console.log(`✅ Order ${data.orderId} marked as cancelled in real-time`);
   };
 
@@ -773,6 +888,10 @@ const Orders = () => {
     );
     
     setLastUpdated(new Date());
+    
+    // Show toast notification for rejection
+    showToast('Order has been rejected', 'error');
+    
     console.log(`✅ Order ${data.orderId} marked as rejected in real-time`);
   };
 
@@ -783,6 +902,10 @@ const Orders = () => {
       );
       
       setLastUpdated(new Date());
+      
+      // Show toast notification for consumer cancellation
+      showToast('Order cancelled by consumer', 'warning');
+      
       console.log(`✅ Order ${data.orderId} removed from farmer's view (cancelled by consumer)`);
     }
   };
@@ -803,6 +926,10 @@ const Orders = () => {
       );
       
       setLastUpdated(new Date());
+      
+      // Show toast notification for rejection by another farmer
+      showToast('Order rejected by another farmer', 'warning');
+      
       console.log(`✅ Order ${data.orderId} updated to rejected by another farmer`);
     }
   };
@@ -826,6 +953,7 @@ const Orders = () => {
       
     } catch (error) {
       console.error('❌ Error fetching orders:', error);
+      showToast('Failed to load orders', 'error');
     } finally {
       setLoading(false);
     }
@@ -856,6 +984,7 @@ const Orders = () => {
       
       console.log(`🔄 Updating order ${orderId} to status: ${newStatus}`);
       
+      // Optimistically update the UI
       setOrders(prevOrders =>
         prevOrders.map(order =>
           order._id === orderId
@@ -870,9 +999,20 @@ const Orders = () => {
       
       console.log('✅ Order status update successful:', response.data);
       
+      // Show success toast based on the new status
+      const statusMessages = {
+        'confirmed': 'Order confirmed and accepted successfully!',
+        'processing': 'Order is now being processed!',
+        'shipped': 'Order marked as shipped!',
+        'delivered': 'Order marked as delivered!'
+      };
+      
+      showToast(statusMessages[newStatus] || 'Order status updated successfully!', 'success');
+      
     } catch (error) {
       console.error('❌ Error updating order status:', error);
       
+      // Revert optimistic update on error
       setOrders(prevOrders =>
         prevOrders.map(order =>
           order._id === orderId
@@ -888,7 +1028,7 @@ const Orders = () => {
         errorMessage = error.message;
       }
       
-      alert(errorMessage);
+      showToast(errorMessage, 'error');
     } finally {
       setUpdatingOrders(prev => ({ ...prev, [orderId]: false }));
     }
@@ -920,6 +1060,7 @@ const Orders = () => {
       
       console.log(`❌ Cancelling order ${order._id}, Reason: ${reason}`);
       
+      // Optimistically update the UI
       if (user?.role === 'consumer') {
         setOrders(prevOrders =>
           prevOrders.filter(o => o._id !== order._id)
@@ -945,11 +1086,18 @@ const Orders = () => {
       
       console.log('✅ Order cancellation API call successful:', response.data);
       
+      // Show success toast
+      const message = user?.role === 'consumer' 
+        ? 'Order cancelled successfully!' 
+        : 'Order rejected successfully!';
+      showToast(message, 'success');
+      
       handleCloseCancelModal();
       
     } catch (error) {
       console.error('❌ Error cancelling order:', error);
       
+      // Revert optimistic update on error
       fetchOrders();
       
       let errorMessage = 'Failed to cancel order. Please try again.';
@@ -959,7 +1107,7 @@ const Orders = () => {
         errorMessage = error.message;
       }
       
-      alert(`Error: ${errorMessage}`);
+      showToast(errorMessage, 'error');
     } finally {
       setCancelModal(prev => ({ ...prev, isLoading: false }));
     }
@@ -983,6 +1131,14 @@ const Orders = () => {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 p-3 sm:p-4 md:p-6">
       <div className="max-w-7xl mx-auto">
+        {/* Toast Notification */}
+        <ToastNotification
+          message={toast.message}
+          type={toast.type}
+          isVisible={toast.isVisible}
+          onClose={hideToast}
+        />
+
         {/* Header */}
         <div className="mb-4 sm:mb-6 md:mb-8">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-3 sm:gap-4">

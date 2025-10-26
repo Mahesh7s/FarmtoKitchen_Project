@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // Use relative path or ensure correct port
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:7000/api';
 
 // Create axios instance with default config
 const api = axios.create({
@@ -9,7 +9,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
-  timeout: 30000,
+  timeout: 30000, // 30 seconds default
 });
 
 // Request interceptor to add auth token
@@ -59,7 +59,8 @@ api.interceptors.response.use(
       console.error('Network error - No response received:', error.message);
       return Promise.reject({
         message: 'Cannot connect to server. Please check if the backend is running.',
-        isNetworkError: true
+        isNetworkError: true,
+        originalError: error
       });
     }
 
@@ -118,7 +119,8 @@ api.interceptors.response.use(
       message: data?.message || 'An unexpected error occurred',
       errors: data?.errors,
       status: status,
-      data: data
+      data: data,
+      originalError: error
     });
   }
 );
@@ -260,10 +262,10 @@ export const wishlistAPI = {
   clear: () => api.delete('/wishlist/clear'),
 };
 
-// Orders API endpoints - UPDATED with enhanced cancellation/rejection
+// Orders API endpoints - COMPLETELY UPDATED with optimized timeouts
 export const ordersAPI = {
   // Create new order
-  create: (data) => api.post('/orders', data),
+  create: (data) => api.post('/orders', data, { timeout: 20000 }),
   
   // Get consumer's orders
   getConsumerOrders: (params = {}) => api.get('/orders/consumer/my-orders', { params }),
@@ -274,34 +276,34 @@ export const ordersAPI = {
   // Get order by ID
   getById: (id) => api.get(`/orders/${id}`),
   
-  // Update order status
+  // Update order status - OPTIMIZED: Reduced timeout
   updateStatus: (orderId, data) => 
-    api.put(`/orders/${orderId}/status`, data),
+    api.put(`/orders/${orderId}/status`, data, { timeout: 15000 }),
   
-  // Cancel or reject order (works for both consumers and farmers)
+  // Cancel or reject order (works for both consumers and farmers) - OPTIMIZED: Reduced timeout
   cancel: (orderId, data) => 
-    api.put(`/orders/${orderId}/cancel`, data),
+    api.put(`/orders/${orderId}/cancel`, data, { timeout: 15000 }),
 
   // Get order analytics (farmer only)
   getAnalytics: (params = {}) => api.get('/orders/farmer/analytics', { params }),
   
   // Process payment
-  processPayment: (orderId, data) => api.post(`/orders/${orderId}/process-payment`, data),
+  processPayment: (orderId, data) => api.post(`/orders/${orderId}/process-payment`, data, { timeout: 20000 }),
 
   // Track order
   track: (id) => api.get(`/orders/${id}/track`),
   
-  // NEW: Get rejected orders specifically
+  // Get rejected orders specifically
   getRejectedOrders: (params = {}) => api.get('/orders/rejected', { params }),
   
-  // NEW: Get cancelled orders specifically
+  // Get cancelled orders specifically
   getCancelledOrders: (params = {}) => api.get('/orders/cancelled', { params }),
 };
 
 // Payment API endpoints
 export const paymentsAPI = {
   // Simulate payment processing
-  simulate: (data) => api.post('/payments/simulate', data),
+  simulate: (data) => api.post('/payments/simulate', data, { timeout: 20000 }),
   
   // Get available payment methods
   getMethods: () => api.get('/payments/methods'),
@@ -310,10 +312,10 @@ export const paymentsAPI = {
   verify: (orderId) => api.get(`/payments/verify/${orderId}`),
   
   // Create payment intent
-  createPaymentIntent: (data) => api.post('/payments/create-payment-intent', data),
+  createPaymentIntent: (data) => api.post('/payments/create-payment-intent', data, { timeout: 20000 }),
   
   // Confirm payment
-  confirmPayment: (data) => api.post('/payments/confirm-payment', data),
+  confirmPayment: (data) => api.post('/payments/confirm-payment', data, { timeout: 20000 }),
 };
 
 // Reviews API endpoints
@@ -343,7 +345,6 @@ export const reviewsAPI = {
 };
 
 // Messages API endpoints
-// Messages API endpoints - UPDATED for text and images only
 export const messagesAPI = {
   // Send message with image upload support
   send: (data) => {
@@ -363,7 +364,8 @@ export const messagesAPI = {
         headers: {
           'Content-Type': 'application/json',
           ...authHeader()
-        }
+        },
+        timeout: 15000
       });
     }
   },
@@ -400,7 +402,8 @@ export const messagesAPI = {
   downloadImage: (messageId, attachmentIndex = 0) => 
     api.get(`/messages/${messageId}/download/${attachmentIndex}`, {
       headers: authHeader(),
-      responseType: 'blob'
+      responseType: 'blob',
+      timeout: 30000
     }),
 
   getImageDownloadUrl: (messageId, attachmentIndex = 0) =>
@@ -419,6 +422,7 @@ export const messagesAPI = {
       headers: authHeader()
     }),
 };
+
 // Search API endpoints
 export const searchAPI = {
   // Advanced search with multiple filters
@@ -445,8 +449,8 @@ export const adminAPI = {
   
   // Order management
   getAllOrders: (params = {}) => api.get('/admin/orders', { params }),
-  updateOrder: (id, data) => api.put(`/admin/orders/${id}`, data),
-  cancelOrder: (id, data) => api.put(`/admin/orders/${id}/cancel`, data),
+  updateOrder: (id, data) => api.put(`/admin/orders/${id}`, data, { timeout: 15000 }),
+  cancelOrder: (id, data) => api.put(`/admin/orders/${id}/cancel`, data, { timeout: 15000 }),
   
   // Analytics
   getPlatformAnalytics: () => api.get('/admin/analytics'),
@@ -456,7 +460,8 @@ export const adminAPI = {
   generateReport: (type, params = {}) => 
     api.get(`/admin/reports/${type}`, { 
       params,
-      responseType: 'blob'
+      responseType: 'blob',
+      timeout: 45000 // Longer timeout for report generation
     }),
 };
 
@@ -470,6 +475,7 @@ export const uploadAPI = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 45000
     });
   },
   
@@ -483,6 +489,7 @@ export const uploadAPI = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 60000
     });
   },
   
@@ -498,7 +505,7 @@ export const notificationsAPI = {
   getUnreadCount: () => api.get('/notifications/unread-count'),
   delete: (id) => api.delete(`/notifications/${id}`),
   
-  // NEW: Order specific notifications
+  // Order specific notifications
   getOrderNotifications: (orderId) => api.get(`/notifications/order/${orderId}`),
   markOrderNotificationsRead: (orderId) => api.put(`/notifications/order/${orderId}/read`),
 };
@@ -538,8 +545,14 @@ export const apiUtils = {
   // Helper to handle API errors in components
   handleError: (error, defaultMessage = 'An error occurred') => {
     if (error.isNetworkError) {
-      return error.message;
+      return error.message || 'Network error: Cannot connect to server';
     }
+    
+    // Handle timeout specifically
+    if (error.message?.includes('timeout') || error.originalError?.code === 'ECONNABORTED') {
+      return 'Request timeout: Please check your connection and try again';
+    }
+    
     return error.message || defaultMessage;
   },
   
@@ -553,6 +566,16 @@ export const apiUtils = {
     return error.status === 422;
   },
   
+  // Helper to check if error is network error
+  isNetworkError: (error) => {
+    return error.isNetworkError || !error.status;
+  },
+  
+  // Helper to check if error is timeout
+  isTimeoutError: (error) => {
+    return error.message?.includes('timeout') || error.originalError?.code === 'ECONNABORTED';
+  },
+  
   // Helper to format API response data
   formatResponse: (response) => {
     return {
@@ -562,7 +585,7 @@ export const apiUtils = {
     };
   },
   
-  // Helper to handle order cancellation/rejection
+  // Helper to handle order cancellation/rejection with better error handling
   handleOrderAction: async (action, orderId, reason = '') => {
     try {
       let response;
@@ -582,6 +605,14 @@ export const apiUtils = {
       return response;
     } catch (error) {
       console.error(`Error performing ${action} on order:`, error);
+      
+      // Enhanced error handling
+      if (apiUtils.isTimeoutError(error)) {
+        throw new Error('Order action timeout. Please try again in a moment.');
+      } else if (apiUtils.isNetworkError(error)) {
+        throw new Error('Network error. Please check your connection.');
+      }
+      
       throw error;
     }
   },
@@ -614,6 +645,21 @@ export const apiUtils = {
     }
     
     return false;
+  },
+  
+  // Helper to retry failed requests
+  retryRequest: async (requestFn, maxRetries = 3, delay = 1000) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await requestFn();
+      } catch (error) {
+        if (attempt === maxRetries) throw error;
+        
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, delay * attempt));
+        console.log(`Retry attempt ${attempt} for failed request`);
+      }
+    }
   }
 };
 
@@ -627,10 +673,15 @@ export const contactAPI = {
 // Subscription API endpoints
 export const subscriptionAPI = {
   getPlans: () => api.get('/subscription/plans'),
-  subscribe: (data) => api.post('/subscription/subscribe', data),
+  subscribe: (data) => api.post('/subscription/subscribe', data, { timeout: 20000 }),
   cancel: () => api.delete('/subscription/cancel'),
   getStatus: () => api.get('/subscription/status'),
   updatePayment: (data) => api.put('/subscription/payment', data),
+};
+
+// Health check endpoint
+export const healthAPI = {
+  check: () => api.get('/health', { timeout: 10000 })
 };
 
 // Export the main api instance for custom requests
